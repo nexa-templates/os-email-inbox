@@ -9,7 +9,7 @@ async function provider(env, path, init = {}) {
   if (!env.NEXA_SERVICE_KEY || !/^[a-f0-9]{32}$/.test(env.NEXA_INSTALLATION_ID || '')) throw failure('Connect this inbox to its Nexa service installation.', 503);
   const origin = new URL(env.NEXA_SERVICE_ORIGIN || 'https://services.nexaintel.work');
   if (origin.protocol !== 'https:' || origin.username || origin.password || origin.port || origin.pathname !== '/' || origin.search || origin.hash) throw failure('Use a secure Nexa service origin.', 503);
-  const response = await fetch(origin.origin + '/v1' + path, { ...init, headers: { ...init.headers, authorization: 'Bearer ' + env.NEXA_SERVICE_KEY, 'x-nexa-installation': env.NEXA_INSTALLATION_ID }, redirect: 'error', signal: AbortSignal.timeout(30000) });
+  const response = await fetch(origin.origin + '/v1' + path, { ...init, headers: { ...init.headers, authorization: 'Bearer ' + env.NEXA_SERVICE_KEY, 'x-nexa-installation': env.NEXA_INSTALLATION_ID }, redirect: 'manual', signal: AbortSignal.timeout(30000) });
   if (!response.ok) throw failure('The email provider could not complete this request.', response.status);
   return response;
 }

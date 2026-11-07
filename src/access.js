@@ -13,7 +13,7 @@ export async function accessUser(request, env, load = fetch) {
     if (header.alg !== 'RS256' || typeof header.kid !== 'string') throw reject('Invalid Access signature.');
     let keys = cache.get(env.ACCESS_ISSUER);
     if (!keys || keys.until < Date.now() || !keys.values.some(k => k.kid === header.kid)) {
-      const response = await load(env.ACCESS_ISSUER + '/cdn-cgi/access/certs', { redirect: 'error', signal: AbortSignal.timeout(10000) });
+      const response = await load(env.ACCESS_ISSUER + '/cdn-cgi/access/certs', { redirect: 'manual', signal: AbortSignal.timeout(10000) });
       if (!response.ok) throw reject('Sign-in verification is unavailable.', 503);
       const data = await response.json(); if (!Array.isArray(data.keys)) throw reject('Sign-in verification is unavailable.', 503);
       keys = { values: data.keys, until: Date.now() + 300000 }; cache.set(env.ACCESS_ISSUER, keys);
