@@ -1,0 +1,49 @@
+{
+  "name": "nexa-os-email-inbox",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-11-03",
+  "workers_dev": true,
+  "vars": {
+    "PREVIEW_MODE": "false",
+    "ACCESS_ISSUER": "",
+    "ACCESS_AUD": "",
+    "APP_ORIGIN": "",
+    "ACCESS_PATHS": "/",
+    "EMAIL_PROVIDER": "cloudflare",
+    "EMAIL_ADDRESSES": "",
+    "NEXA_SERVICE_ORIGIN": "https://services.nexaintel.work",
+    "NEXA_INSTALLATION_ID": ""
+  },
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "MAILBOX",
+        "class_name": "Mailbox"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "Mailbox"
+      ]
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "* * * * *"
+    ]
+  },
+  "preview_urls": false,
+  "send_email": [
+    {
+      "name": "EMAIL"
+    }
+  ]
+}

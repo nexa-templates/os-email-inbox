@@ -1,7 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import PostalMime from 'postal-mime';
-import { verifiedUser } from './access.js';
-import { createSiteAuth } from './site-auth.js';
+import { accessUser, accessFailure } from './access.js';
+import { directAddresses, mailboxSettings, mailService as nexa } from './mail.js';
 import { isPreview, previewResponse } from './preview.js';
 
 const MAX_MAIL = 5 * 1024 * 1024, MAX_STORE = 512 * 1024 * 1024, CHUNK = 128 * 1024;
@@ -14,15 +14,6 @@ async function bytes(request, limit) {
   const chunks = []; let length = 0;
   while (true) { const part = await reader.read(); if (part.done) break; length += part.value.length; if (length > limit) { await reader.cancel(); throw fail('Message is too large.', 413); } chunks.push(part.value); }
   const value = new Uint8Array(length); let offset = 0; for (const chunk of chunks) { value.set(chunk, offset); offset += chunk.length; } return value;
-}
-async function nexa(env, path, init = {}) {
-  if (isPreview(env)) throw fail('Nexa services are disabled in preview.', 403);
-  if (!env.NEXA_SERVICE_KEY || !env.NEXA_SERVICE_ORIGIN) throw fail('Set up Email in the project’s Nexa Services and deploy its runtime secrets.', 503);
-  const origin = new URL(env.NEXA_SERVICE_ORIGIN);
-  if (origin.protocol !== 'https:' && origin.hostname !== 'localhost' && origin.hostname !== '127.0.0.1') throw fail('Use a secure Nexa service origin.', 503);
-  const response = await fetch(origin.origin + '/v1' + path, { ...init, headers: { ...init.headers, authorization: 'Bearer ' + env.NEXA_SERVICE_KEY }, redirect: 'manual', signal: AbortSignal.timeout(30000) });
-  if (!response.ok) { const body = await response.json().catch(() => null); throw fail(body?.error?.message || 'Nexa email is temporarily unavailable.', response.status); }
-  return response;
 }
 export class Mailbox extends DurableObject {
   constructor(ctx, env) {
@@ -52,15 +43,20 @@ export class Mailbox extends DurableObject {
       for (let offset = 0, part = 0; offset < raw.length; offset += CHUNK, part++) this.sql.exec('INSERT INTO content VALUES(?,?,?)', delivery.id, part, raw.slice(offset, offset + CHUNK));
     });
   }
+  async receive(raw, recipient, sender) {
+    if (this.env.PREVIEW_MODE === 'true' || this.env.EMAIL_PROVIDER !== 'cloudflare' || !directAddresses(this.env).includes(recipient) || raw.length > MAX_MAIL) throw fail('Delivery denied.', 403);
+    const digest = await crypto.subtle.digest('SHA-256', raw), fingerprint = new TextEncoder().encode(recipient + ':' + sender + ':' + Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join(''));
+    const key = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', fingerprint)), b => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
+    this.save({ id: key, recipient, sender, receivedAt: Date.now(), authenticated: false }, raw, await PostalMime.parse(raw));
+  }
   async sync() {
     if (this.syncing) return this.syncing;
     this.syncing = (async () => {
       try {
         const info = await (await nexa(this.env, '/email/incoming')).json();
-        const usage = await (await nexa(this.env, '/usage')).json();
-        const base = usage.sender, at = base.indexOf('@');
-        this.set('addresses', JSON.stringify(info.aliases.map(a => base.slice(0, at) + (a.alias ? '+' + a.alias : '') + base.slice(at))));
-        this.set('sender', base);
+        const settings = await mailboxSettings(this.env);
+        this.set('addresses', JSON.stringify(settings.addresses));
+        this.set('sender', settings.sender);
         // Process a bounded batch; subsequent cron runs resume the queue.
         for (const delivery of info.messages.slice(0, 10)) {
           if (!this.sql.exec('SELECT id FROM messages WHERE id=?', delivery.id).toArray().length) {
@@ -129,6 +125,7 @@ export class Mailbox extends DurableObject {
           if (!row) throw fail('Draft not found.', 404);
          if (row.status === 'accepted' || row.status === 'rejected') return json(JSON.parse(row.result));
          if (this.sending.has(row.id)) return json({ status: 'pending' }, 202);
+         if (row.status === 'pending' || row.status === 'unknown') return json({ status: 'unknown' }, 202);
          this.capacity(new TextEncoder().encode(row.body).length, row.id);
         this.sending.add(row.id);
         this.sql.exec("UPDATE drafts SET status='pending' WHERE id=?", row.id);
@@ -158,32 +155,27 @@ export class Mailbox extends DurableObject {
 
 const application = {
   async scheduled(_event, env, ctx) { if (!isPreview(env)) ctx.waitUntil(env.MAILBOX.get(env.MAILBOX.idFromName('inbox')).sync().catch(() => {})); },
-  async fetch(request, env) {
-    const url = new URL(request.url);
-    const user = await verifiedUser(request, env.NEXA_SERVICE_KEY);
-    if (!user) return new Response('This inbox requires protected Nexa sign-in. Deploy it through Nexa with project sign-in enabled and Email runtime secrets installed.', { status: 401, headers: { 'cache-control': 'no-store' } });
-    if (!['GET', 'HEAD'].includes(request.method) && request.headers.get('origin') !== url.origin) return json({ error: 'Invalid request origin.' }, 403);
-    if (url.pathname === '/api/me') return json(user);
-    if (url.pathname.startsWith('/api/')) return env.MAILBOX.get(env.MAILBOX.idFromName('inbox')).fetch(request);
-    const response = await env.ASSETS.fetch(request), headers = new Headers(response.headers);
-    headers.set('cache-control', 'private, no-store'); headers.set('x-content-type-options', 'nosniff'); headers.set('referrer-policy', 'no-referrer');
-    headers.set('content-security-policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'");
-    return new Response(response.body, { status: response.status, headers });
+  async email(message, env) {
+    if (isPreview(env) || env.EMAIL_PROVIDER !== 'cloudflare') { message.setReject('This inbox does not receive live Cloudflare mail.'); return; }
+    try {
+      const address = message.to.toLowerCase();
+      if (!directAddresses(env).includes(address)) throw fail('Unknown receiving address.', 404);
+      if (message.rawSize > MAX_MAIL || message.rawSize <= 0) throw fail('Email must fit within 5 MiB.', 413);
+      const raw = await bytes({ body: message.raw }, MAX_MAIL);
+      await env.MAILBOX.get(env.MAILBOX.idFromName('inbox')).receive(raw, address, message.from);
+    } catch (error) { message.setReject(error.status ? error.message : 'Mailbox storage is unavailable. Retry later.'); }
   },
-};
-let authentication;
-export default {
-  scheduled: application.scheduled,
-  async fetch(request, env, ctx) {
+  async fetch(request, env) {
     if (isPreview(env)) return previewResponse(request, env);
     try {
-      const origin = new URL(request.url).origin;
-      if (!authentication || authentication.origin !== origin || authentication.key !== env.NEXA_SERVICE_KEY || authentication.expires < Date.now()) {
-        const config = await (await nexa(env, '/email/incoming/site-config', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ origin }) })).json();
-        if (config.origin !== origin) throw fail('This inbox hostname is not configured.', 421);
-        authentication = { origin, key: env.NEXA_SERVICE_KEY, expires: Date.now() + 300000, handler: createSiteAuth(config, application) };
-      }
-      return await authentication.handler.fetch(request, env, ctx);
-    } catch (error) { return new Response(error.status ? error.message : 'Inbox sign-in is temporarily unavailable.', { status: error.status || 503, headers: { 'cache-control': 'no-store' } }); }
+      const user = await accessUser(request, env), path = new URL(request.url).pathname;
+      if (path === '/api/me') return json(user);
+      if (path.startsWith('/api/')) return env.MAILBOX.get(env.MAILBOX.idFromName('inbox')).fetch(request);
+      const response = await env.ASSETS.fetch(request), headers = new Headers(response.headers);
+      headers.set('cache-control', 'private, no-store'); headers.set('x-content-type-options', 'nosniff'); headers.set('referrer-policy', 'no-referrer');
+      headers.set('content-security-policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'");
+      return new Response(response.body, { status: response.status, headers });
+    } catch (error) { return accessFailure(error); }
   },
 };
+export default application;

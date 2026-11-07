@@ -1,0 +1,1 @@
+# Cloudflare email needs no API key. For EMAIL_PROVIDER=nexa, add NEXA_SERVICE_KEY as a Worker secret.

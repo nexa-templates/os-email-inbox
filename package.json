@@ -1,11 +1,43 @@
 {
-  "name": "@nexa-templates/email-inbox",
+  "name": "@nexa-os-templates/email-inbox",
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "scripts": { "dev": "wrangler dev", "build": "node scripts/build.mjs", "preview": "node scripts/dev.mjs", "test": "bun test tests" },
-  "dependencies": { "postal-mime": "4.2.0" },
-  "devDependencies": { "wrangler": "4.156.1" },
-  "engines": { "node": ">=22" },
-  "license": "MIT"
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "node scripts/build.mjs",
+    "preview": "node scripts/dev.mjs",
+    "test": "node --test tests/access.test.mjs && bun test tests/mailbox.test.js tests/preview.test.js",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "postal-mime": "4.2.0"
+  },
+  "devDependencies": {
+    "wrangler": "4.156.1"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "cloudflare": {
+    "label": "Email Inbox",
+    "bindings": {
+      "ACCESS_ISSUER": {
+        "description": "Cloudflare Access team URL"
+      },
+      "ACCESS_AUD": {
+        "description": "Access application audience"
+      },
+      "APP_ORIGIN": {
+        "description": "Application HTTPS origin"
+      },
+      "EMAIL_PROVIDER": {
+        "description": "cloudflare or nexa"
+      },
+      "EMAIL_ADDRESSES": {
+        "description": "Allowed Cloudflare email addresses, comma separated"
+      }
+    }
+  }
 }
