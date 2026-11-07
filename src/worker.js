@@ -44,7 +44,8 @@ export class Mailbox extends DurableObject {
     });
   }
   async receive(raw, recipient, sender) {
-    if (this.env.PREVIEW_MODE === 'true' || this.env.EMAIL_PROVIDER !== 'cloudflare' || !directAddresses(this.env).includes(recipient) || raw.length > MAX_MAIL) throw fail('Delivery denied.', 403);
+    const settings = await mailboxSettings(this.env);
+    if (settings.incoming !== 'worker' || !settings.addresses.includes(recipient) || raw.length > MAX_MAIL) throw fail('Delivery denied.', 403);
     const digest = await crypto.subtle.digest('SHA-256', raw), fingerprint = new TextEncoder().encode(recipient + ':' + sender + ':' + Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join(''));
     const key = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', fingerprint)), b => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
     this.save({ id: key, recipient, sender, receivedAt: Date.now(), authenticated: false }, raw, await PostalMime.parse(raw));
@@ -156,10 +157,11 @@ export class Mailbox extends DurableObject {
 const application = {
   async scheduled(_event, env, ctx) { if (!isPreview(env)) ctx.waitUntil(env.MAILBOX.get(env.MAILBOX.idFromName('inbox')).sync().catch(() => {})); },
   async email(message, env) {
-    if (isPreview(env) || env.EMAIL_PROVIDER !== 'cloudflare') { message.setReject('This inbox does not receive live Cloudflare mail.'); return; }
+     if (isPreview(env)) { message.setReject('Live email is disabled in preview.'); return; }
     try {
       const address = message.to.toLowerCase();
-      if (!directAddresses(env).includes(address)) throw fail('Unknown receiving address.', 404);
+       const settings = await mailboxSettings(env);
+       if (settings.incoming !== 'worker' || !settings.addresses.includes(address)) throw fail('Unknown receiving address.', 404);
       if (message.rawSize > MAX_MAIL || message.rawSize <= 0) throw fail('Email must fit within 5 MiB.', 413);
       const raw = await bytes({ body: message.raw }, MAX_MAIL);
       await env.MAILBOX.get(env.MAILBOX.idFromName('inbox')).receive(raw, address, message.from);

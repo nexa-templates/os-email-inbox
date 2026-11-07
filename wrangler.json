@@ -11,6 +11,7 @@
     "ACCESS_PATHS": "/",
     "EMAIL_PROVIDER": "cloudflare",
     "EMAIL_ADDRESSES": "",
+    "OS_SERVICE_URL": "",
     "NEXA_SERVICE_ORIGIN": "https://services.nexaintel.work",
     "NEXA_INSTALLATION_ID": ""
   },

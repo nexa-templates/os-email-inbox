@@ -6,6 +6,14 @@ export function directAddresses(env) {
   return [...new Set(values)];
 }
 async function provider(env, path, init = {}) {
+  if (env.EMAIL_PROVIDER === 'os') {
+    if (!env.OS_SERVICE_KEY || !env.OS_SERVICE_URL) throw failure('Connect this inbox to its project email service.', 503);
+    const base = new URL(env.OS_SERVICE_URL);
+    if (base.protocol !== 'https:' || base.username || base.password || base.port || base.pathname !== '/internal/apps/v1' || base.search || base.hash) throw failure('Use the project service endpoint.', 503);
+    const response = await fetch(base.href + path, { ...init, headers: { ...init.headers, authorization: 'Bearer ' + env.OS_SERVICE_KEY }, redirect: 'manual', signal: AbortSignal.timeout(30000) });
+    if (!response.ok) throw failure('The project email service could not complete this request.', response.status);
+    return response;
+  }
   if (!env.NEXA_SERVICE_KEY || !/^[a-f0-9]{32}$/.test(env.NEXA_INSTALLATION_ID || '')) throw failure('Connect this inbox to its Nexa service installation.', 503);
   const origin = new URL(env.NEXA_SERVICE_ORIGIN || 'https://services.nexaintel.work');
   if (origin.protocol !== 'https:' || origin.username || origin.password || origin.port || origin.pathname !== '/' || origin.search || origin.hash) throw failure('Use a secure Nexa service origin.', 503);
@@ -15,13 +23,14 @@ async function provider(env, path, init = {}) {
 }
 export async function mailboxSettings(env) {
   if (env.PREVIEW_MODE === 'true') throw failure('Live email is disabled in preview.', 403);
-  if (env.EMAIL_PROVIDER === 'nexa') {
+  if (['nexa', 'os'].includes(env.EMAIL_PROVIDER)) {
     const value = await (await provider(env, '/email/config')).json();
     if (!Array.isArray(value.addresses) || !value.addresses.length || value.addresses.some(address => !valid(address))) throw failure('Assign a receiving alias to this inbox installation.', 409);
-    return { addresses: value.addresses, sender: value.addresses[0] };
+     if (env.EMAIL_PROVIDER === 'os' && !['worker', 'queue'].includes(value.incoming)) throw failure('The project email service returned an invalid delivery mode.', 502);
+     return { addresses: value.addresses, sender: value.addresses[0], incoming: env.EMAIL_PROVIDER === 'os' ? value.incoming : 'queue' };
   }
   if (env.EMAIL_PROVIDER !== 'cloudflare') throw failure('Choose an email provider.', 503);
-  const addresses = directAddresses(env); return { addresses, sender: addresses[0] };
+   const addresses = directAddresses(env); return { addresses, sender: addresses[0], incoming: 'worker' };
 }
 export function outgoingMessage(input, addresses) {
   if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => !['to', 'from', 'replyTo', 'subject', 'text', 'html', 'attachments', 'inReplyTo', 'references'].includes(key))) throw failure('Invalid email.');
@@ -46,7 +55,7 @@ export function outgoingMessage(input, addresses) {
 }
 export async function mailService(env, path, init = {}) {
   if (env.PREVIEW_MODE === 'true') throw failure('Live email is disabled in preview.', 403);
-  if (env.EMAIL_PROVIDER === 'nexa') {
+  if (['nexa', 'os'].includes(env.EMAIL_PROVIDER)) {
     const response = await provider(env, path, init);
     if (path !== '/email/incoming') return response;
     const body = await response.json(), settings = await (await provider(env, '/email/config')).json();

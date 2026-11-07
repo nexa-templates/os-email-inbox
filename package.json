@@ -33,10 +33,13 @@
         "description": "Application HTTPS origin"
       },
       "EMAIL_PROVIDER": {
-        "description": "cloudflare or nexa"
+        "description": "cloudflare, os or nexa"
       },
       "EMAIL_ADDRESSES": {
         "description": "Allowed Cloudflare email addresses, comma separated"
+      },
+      "OS_SERVICE_URL": {
+        "description": "Project Services endpoint when using os"
       }
     }
   }

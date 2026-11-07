@@ -66,6 +66,26 @@ test('Unknown direct sends cannot be repeated or edited; confirmed sends preserv
     const sent = await (await f.call('/messages/' + accepted)).json(); expect(sent.replyTo).toBe(body.to); expect(sent.inReplyTo).toBe('<sent@mail.test>'); expect(await (await f.call('/messages/' + accepted + '/raw')).json()).toEqual(body);
   } finally { f.db.close(); }
 });
+test('OS project keys support verified native mail and queue delivery without exposing a bundle key', async () => {
+  const f = setup({ EMAIL_PROVIDER: 'os', OS_SERVICE_URL: 'https://os.test/internal/apps/v1', OS_SERVICE_KEY: 'project-key' }), id = 'c'.repeat(32);
+  const raw = 'From: sender@mail.test\r\nTo: ' + address + '\r\nSubject: OS mail\r\n\r\nBody'; let mode = 'worker', acked = false, rejected = '';
+  const fetcher = spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+    expect(String(url).startsWith('https://os.test/internal/apps/v1/email/')).toBe(true); expect(init.redirect).toBe('manual');
+    expect(new Headers(init.headers).get('authorization')).toBe('Bearer project-key'); expect(new Headers(init.headers).has('x-nexa-installation')).toBe(false);
+    if (url.endsWith('/config')) return Response.json({ addresses: [address], incoming: mode });
+    if (url.endsWith('/incoming')) return Response.json({ messages: [{ id, alias: 'accounting', sender: 'sender@mail.test', received_at: Date.now() }] });
+    if (url.endsWith('/ack')) { expect(f.db.query('SELECT COUNT(*) n FROM messages').get().n).toBe(2); acked = true; return Response.json({ acknowledged: true }); }
+    return new Response(raw);
+  });
+  const env = { ...f.env, MAILBOX: { idFromName: name => name, get: () => f.box } };
+  const deliver = () => worker.email({ to: address, from: 'sender@mail.test', rawSize: raw.length, raw: new Blob([raw]).stream(), setReject: value => { rejected = value; } }, env);
+  try {
+    await deliver(); expect(rejected).toBe(''); expect(f.db.query('SELECT COUNT(*) n FROM messages').get().n).toBe(1);
+    mode = 'queue'; await deliver(); expect(rejected).toContain('Unknown receiving');
+    await f.box.sync(); expect(acked).toBe(true); expect(f.db.query('SELECT COUNT(*) n FROM messages').get().n).toBe(2);
+    f.env.OS_SERVICE_URL = 'https://os.test/other'; await expect(f.box.sync()).rejects.toThrow('project service endpoint');
+  } finally { fetcher.mockRestore(); f.db.close(); }
+});
 test('Full mailbox and invalid or unowned senders never reach the sending provider', async () => {
   let calls = 0; const f = setup({ EMAIL_PROVIDER: 'cloudflare', EMAIL_ADDRESSES: address, EMAIL: { send: async () => { calls++; return { messageId: '<sent@mail.test>' }; } } });
   const id = crypto.randomUUID(), body = { from: address, to: 'to@mail.test', subject: 'Invoice', text: 'hello' };

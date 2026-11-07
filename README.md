@@ -17,7 +17,9 @@ Protect the application hostname with Cloudflare Access. Configure `ACCESS_ISSUE
 
 Default `EMAIL_PROVIDER=cloudflare`: configure your own Email Routing rules to this Worker and list allowed recipients/senders in `EMAIL_ADDRESSES`. Enable sending for your domain/account. Incoming MIME and attachments are stored in the customer-owned Mailbox SQLite Durable Object before delivery completes. Unknown sends are retained without automatic retry.
 
-Optional `EMAIL_PROVIDER=nexa`: register this app as a Nexa service installation, assign receiving aliases to it, set `NEXA_INSTALLATION_ID`, and install an email-only key scoped to that installation as `NEXA_SERVICE_KEY`. The inbox acknowledges queued mail only after durable local storage. Never put the key in client code.
+For Nexa OS, configure Email in the project Services tab, create an email key, set `EMAIL_PROVIDER=os` and `OS_SERVICE_URL` to the displayed endpoint, and save that key as the `OS_SERVICE_KEY` Worker secret. The OS supplies only this project’s assigned addresses. With Cloudflare email, route incoming addresses to this Inbox Worker; with Nexa email, messages arrive through the durable queue.
+
+Optional `EMAIL_PROVIDER=nexa`: register this app as a separate Nexa service installation, assign receiving aliases to it, set `NEXA_INSTALLATION_ID`, and install an email-only key scoped to that installation as `NEXA_SERVICE_KEY`. The inbox acknowledges queued mail only after durable local storage. Never put any service key in client code.
 
 ## Source
 
