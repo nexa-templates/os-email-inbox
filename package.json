@@ -11,7 +11,8 @@
     "deploy": "wrangler deploy"
   },
   "dependencies": {
-    "postal-mime": "4.2.0"
+    "postal-mime": "4.2.0",
+    "mimetext": "3.0.28"
   },
   "devDependencies": {
     "wrangler": "4.156.1"

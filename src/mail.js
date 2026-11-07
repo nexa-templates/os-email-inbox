@@ -1,3 +1,4 @@
+import { sendMessage } from './mime.js';
 const failure = (message, status = 400) => Object.assign(new Error(message), { status });
 const valid = value => typeof value === 'string' && value.length <= 254 && /^[^\s@<>\x00-\x1f]+@[^\s@<>]+\.[^\s@<>]+$/.test(value);
 export function directAddresses(env) {
@@ -66,6 +67,6 @@ export async function mailService(env, path, init = {}) {
   if (path !== '/email/send' || init.method !== 'POST' || !env.EMAIL) throw failure('Email sending is not configured.', 503);
   const data = outgoingMessage(JSON.parse(init.body), directAddresses(env));
   // The Mailbox records the attempt before this call and never retries an uncertain send.
-  try { const result = await env.EMAIL.send(data); return Response.json({ status: 'accepted', messageId: result.messageId }); }
+  try { const result = await sendMessage(env.EMAIL, data); return Response.json({ status: 'accepted', messageId: result.messageId }); }
   catch { return Response.json({ status: 'unknown' }, { status: 202 }); }
 }
